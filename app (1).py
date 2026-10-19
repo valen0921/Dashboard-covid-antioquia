@@ -214,7 +214,97 @@ with st.expander("Consultar datos resumidos"):
     st.dataframe(datos, width="stretch")
     st.write(f"Casos representados con los filtros actuales: {total:,}")
 
+
+# Mapa geográfico de casos por municipio
+import requests
+import unicodedata
+
+st.divider()
+st.subheader("Mapa geográfico de casos de COVID-19")
+st.caption(
+    "Distribución de los casos registrados por municipio "
+    "de Antioquia. Selecciona un municipio para explorar "
+    "su información."
+)
+
+def normalizar_nombre(nombre):
+    nombre = str(nombre).strip().upper()
+    nombre = unicodedata.normalize("NFKD", nombre)
+    return "".join(
+        c for c in nombre
+        if not unicodedata.combining(c)
+    )
+
+try:
+    url_geojson = (
+        "https://raw.githubusercontent.com/"
+        "ytolosa/mapas-colombia/main/output/geojson/"
+        "col_municipios_inset_nacional.geojson"
+    )
+
+    respuesta = requests.get(url_geojson, timeout=30)
+    respuesta.raise_for_status()
+    geojson = respuesta.json()
+
+    # Conservar únicamente municipios de Antioquia
+    features = [
+        feature for feature in geojson["features"]
+        if normalizar_nombre(
+            feature.get("properties", {}).get("dpto_nombre", "")
+        ) == "ANTIOQUIA"
+    ]
+
+    # Crear identificador normalizado para relacionar los datos
+    for feature in features:
+        nombre = feature["properties"].get("mpio_nombre", "")
+        feature["properties"]["municipio_norm"] = (
+            normalizar_nombre(nombre)
+        )
+
+    mapa_geojson = {
+        "type": "FeatureCollection",
+        "features": features
+    }
+
+    mapa_datos = (
+        datos.groupby("ciudad_municipio_nom", as_index=False)["casos"]
+        .sum()
+    )
+
+    mapa_datos["municipio_norm"] = (
+        mapa_datos["ciudad_municipio_nom"]
+        .apply(normalizar_nombre)
+    )
+
+    fig_mapa = px.choropleth_map(
+        mapa_datos,
+        geojson=mapa_geojson,
+        locations="municipio_norm",
+        featureidkey="properties.municipio_norm",
+        color="casos",
+        hover_name="ciudad_municipio_nom",
+        hover_data={"casos": ":,", "municipio_norm": False},
+        color_continuous_scale="Blues",
+        map_style="carto-positron",
+        center={"lat": 6.3, "lon": -75.5},
+        zoom=6,
+        opacity=0.7,
+        title="Casos registrados por municipio"
+    )
+
+    st.plotly_chart(fig_mapa, width="stretch")
+
+except Exception as error:
+    st.warning(
+        "No fue posible cargar el mapa geográfico. "
+        "Verifica la conexión a la fuente cartográfica."
+    )
+    st.caption(f"Detalle técnico: {error}")
+
+
 st.caption(
     "Fuente: conjunto de datos COVID-19 de Antioquia, "
     "previamente procesado y agrupado para este dashboard."
 )
+
+
